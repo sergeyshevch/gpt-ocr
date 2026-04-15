@@ -9,6 +9,8 @@ const API_URL = "https://api.openai.com/v1/chat/completions";
 
 const SYSTEM_MARKDOWN_SINGLE = `You are an OCR assistant for presentation slides. Transcribe ALL visible text from the image.
 
+Language: keep the exact same language(s) and script as on the slide (including mixed languages). Never translate—do not rewrite into English or any other language.
+
 Preserve structure and reading order:
 - Use line breaks to match vertical layout where it helps readability.
 - Use Markdown headings (#, ##) only when the slide clearly uses title vs body hierarchy.
@@ -29,12 +31,15 @@ For EVERY image, output exactly one block in this exact format (use the slide nu
 
 Rules:
 - N must match the slide index you were told for that image position (do not skip or merge slides).
+- Language: keep the exact same language(s) and script as on each slide; never translate.
 - Preserve structure: headings as Markdown #/##, lists, GFM tables where clear, line breaks for layout.
 - No text before the first --- Slide --- line and no summary after the last block.
 - Inside each block (after the delimiter line), transcribe only the slide—do not repeat slide numbers or "Slide N" as a heading inside the body.
 - Do not invent content; use [illegible] for unreadable text.`;
 
 const SYSTEM_HTML_SINGLE = `You are an OCR assistant for presentation slides. Transcribe ALL visible text from the image.
+
+Language: keep the exact same language(s) and script as on the slide (including mixed languages). Never translate—do not rewrite into English or any other language.
 
 Output a single HTML fragment only (no <!DOCTYPE>, no <html>, <head>, or <body> wrapper).
 Use semantic tags: <h1>–<h3> for titles, <p> for paragraphs, <br> only when line breaks are meaningful, <ul>/<ol>/<li> for lists.
@@ -54,6 +59,7 @@ For EVERY image, output exactly one block in this exact format (slide numbers ar
 
 Rules:
 - N must match the slide index for that image position.
+- Language: keep the exact same language(s) and script as on each slide; never translate.
 - No text before the first --- Slide --- line. No markdown—only HTML inside each block.
 - No summary after the last block.
 - Inside each block's HTML, do not add headings or text that only label the slide index—only the slide's real content.`;
@@ -233,6 +239,7 @@ function buildUserContentBatch(start, end, dataUrls, format) {
   const lines = [
     `There are ${n} images in order.`,
     `They are slides ${start} through ${end} (inclusive).`,
+    "Transcribe each slide in the same language(s) and script as printed on the slide; do not translate.",
     `For each image, output one block starting with exactly "--- Slide K ---" where K is that slide's number (${start}…${end}).`,
     format === "html"
       ? "Inside each block, output only an HTML fragment (no wrapper document)."
@@ -454,7 +461,10 @@ form.addEventListener("submit", async (e) => {
           format === "html" ? SYSTEM_HTML_SINGLE : SYSTEM_MARKDOWN_SINGLE;
         const detail = getImageDetail();
         const userContent = [
-          { type: "text", text: "Transcribe this slide." },
+          {
+            type: "text",
+            text: "Transcribe this slide in the same language as on the slide; do not translate.",
+          },
           {
             type: "image_url",
             image_url: { url: dataUrls[0], detail },
