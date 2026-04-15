@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GPT Slide OCR</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>GPT Slide OCR</h1>
+      <p class="warning">
+        Your API key is stored in this browser only (localStorage). On a shared or public
+        deployment, keys can be exposed via DevTools—use a restricted key and rotate it if
+        needed.
+      </p>
+
+      <form id="ocr-form" class="form">
+        <label class="field">
+          <span>OpenAI API key</span>
+          <input
+            id="api-key"
+            type="password"
+            name="apiKey"
+            autocomplete="off"
+            placeholder="sk-..."
+            required
+          />
+        </label>
+
+        <label class="field">
+          <span>Slide images (max 150)</span>
+          <input
+            id="files"
+            type="file"
+            name="files"
+            accept="image/*"
+            multiple
+            required
+          />
+        </label>
+
+        <p id="file-hint" class="hint" aria-live="polite"></p>
+
+        <fieldset class="options">
+          <legend>API usage and output</legend>
+          <label class="inline">
+            <span>Images per request</span>
+            <select id="batch-size" name="batchSize" title="Higher batches mean fewer API calls and lower cost, but each request uses more tokens. Use 1 if quality drops.">
+              <option value="1">1 (safest)</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+              <option value="5">5</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="detail-low" type="checkbox" name="detailLow" />
+            <span>Lower image detail (fewer image tokens, faster; may hurt tiny text)</span>
+          </label>
+          <label class="inline">
+            <span>Output format</span>
+            <select id="output-format" name="outputFormat" title="HTML preserves structure best when pasted into Microsoft Word.">
+              <option value="markdown">Markdown (good for editors, GitHub)</option>
+              <option value="html">HTML (best for paste into Word)</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit" id="submit-btn">Recognize text</button>
+          <button type="button" id="copy-btn" disabled>Copy as text</button>
+          <button type="button" id="copy-word-btn" disabled>Copy for Word</button>
+        </div>
+      </form>
+
+      <section class="progress-section" aria-label="Progress">
+        <div class="progress-row">
+          <label for="progress-bar">Progress</label>
+          <span id="progress-label">0 / 0</span>
+        </div>
+        <progress id="progress-bar" max="100" value="0"></progress>
+        <p id="status" class="status" role="status"></p>
+      </section>
+
+      <label class="field output-field">
+        <span>Extracted text</span>
+        <textarea id="output" readonly rows="18" placeholder="Results appear here…"></textarea>
+      </label>
+    </main>
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
