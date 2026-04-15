@@ -61,6 +61,7 @@ const form = $("ocr-form");
 const submitBtn = $("submit-btn");
 const copyBtn = $("copy-btn");
 const copyWordBtn = $("copy-word-btn");
+const previewDocsBtn = $("preview-docs-btn");
 const batchSizeSelect = $("batch-size");
 const detailLowInput = $("detail-low");
 const outputFormatSelect = $("output-format");

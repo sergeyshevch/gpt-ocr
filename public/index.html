@@ -59,7 +59,7 @@
           </label>
           <label class="inline">
             <span>Output format</span>
-            <select id="output-format" name="outputFormat" title="HTML preserves structure best when pasted into Microsoft Word.">
+            <select id="output-format" name="outputFormat" title="HTML preserves structure in Word. For Google Docs, use “Preview for Google Docs” after OCR.">
               <option value="markdown">Markdown (good for editors, GitHub)</option>
               <option value="html">HTML (best for paste into Word)</option>
             </select>
@@ -70,7 +70,13 @@
           <button type="submit" id="submit-btn">Recognize text</button>
           <button type="button" id="copy-btn" disabled>Copy as text</button>
           <button type="button" id="copy-word-btn" disabled>Copy for Word</button>
+          <button type="button" id="preview-docs-btn" disabled>Preview for Google Docs</button>
         </div>
+        <p class="hint paste-hint">
+          Google Docs often drops formatting when pasting from the “Copy for Word” button. Open
+          <strong>Preview for Google Docs</strong>, click inside the preview, then select all and
+          copy—Docs usually keeps headings, lists, and tables from that clipboard.
+        </p>
       </form>
 
       <section class="progress-section" aria-label="Progress">
