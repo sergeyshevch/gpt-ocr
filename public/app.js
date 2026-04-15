@@ -156,7 +156,7 @@ function updateOutputActions() {
   if (previewDocsBtn) {
     previewDocsBtn.disabled = !has;
     previewDocsBtn.title = has
-      ? "Opens a new tab—click inside the preview, select all, copy, then paste into Google Docs."
+      ? "Opens one new tab with formatted content (no nested frames)—copy, then paste into Google Docs."
       : "Run recognition first; preview uses the text in the output box below.";
   }
 }
@@ -300,18 +300,68 @@ function buildWordHtml(combinedText, format) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${inner}</body></html>`;
 }
 
-/** Full document for iframe preview (sandboxed, no scripts). */
-function buildPreviewIframeDocument(combinedText, format) {
-  const inner = buildRichDocInnerHtml(combinedText, format);
-  const baseCss = `
-    body { font-family: Arial, Helvetica, sans-serif; margin: 1rem 1.25rem; color: #111; line-height: 1.45; }
-    pre { font-family: Consolas, "Courier New", monospace; font-size: 13px; }
-    table { border-collapse: collapse; }
-    td, th { border: 1px solid #333; padding: 4px 8px; vertical-align: top; }
-    ul, ol { margin: 0.5em 0; padding-left: 1.5em; }
-    .slide h2 { font-size: 15pt; }
+/** Strip script tags from model HTML before embedding in a preview document. */
+function stripScriptsFromHtml(html) {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<\/script/gi, "<\\/script");
+}
+
+/**
+ * One self-contained HTML document (single blob URL). Nested blob + iframe is blocked on
+ * GitHub Pages / some browsers (“Not allowed to load local resource: blob:…”).
+ */
+function buildPreviewStandaloneDocument(combinedText, format) {
+  const rawInner = buildRichDocInnerHtml(combinedText, format);
+  const inner = stripScriptsFromHtml(rawInner);
+  const tip =
+    format !== "html"
+      ? `<p class="banner-tip">Tip: use <strong>HTML</strong> output for headings, lists, and tables in Docs.</p>`
+      : "";
+  const css = `
+    body { margin: 0; background: #fff; color: #202124; font-family: system-ui, -apple-system, Segoe UI, sans-serif; font-size: 14px; }
+    .banner { background: #e8f0fe; border-bottom: 1px solid #b8c9ea; padding: 12px 16px; line-height: 1.55; }
+    .banner-tip { margin: 8px 0 0; opacity: 0.95; font-size: 13px; }
+    kbd { font-family: inherit; border: 1px solid #888; border-radius: 4px; padding: 1px 6px; background: #fff; }
+    main#gptocr-main {
+      padding: 1rem 1.25rem 2rem;
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.45;
+      color: #111;
+    }
+    main#gptocr-main pre { font-family: Consolas, "Courier New", monospace; font-size: 13px; }
+    main#gptocr-main table { border-collapse: collapse; }
+    main#gptocr-main td, main#gptocr-main th { border: 1px solid #333; padding: 4px 8px; vertical-align: top; }
+    main#gptocr-main ul, main#gptocr-main ol { margin: 0.5em 0; padding-left: 1.5em; }
+    main#gptocr-main .slide h2 { font-size: 15pt; }
   `;
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>OCR preview</title><style>${baseCss}</style></head><body>${inner}</body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCR preview — Google Docs</title>
+<style>${css}</style>
+</head><body>
+  <div class="banner">
+    <strong>Google Docs:</strong> slide content below is selected automatically when this tab opens.
+    Press <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>⌘</kbd>+<kbd>C</kbd>, switch to your Doc, and paste.
+    If nothing is selected, click inside the slide area, then <kbd>Ctrl</kbd>+<kbd>A</kbd> / <kbd>⌘</kbd>+<kbd>A</kbd>, then copy.
+    ${tip}
+  </div>
+  <main id="gptocr-main">${inner}</main>
+  <script>
+(function () {
+  var el = document.getElementById("gptocr-main");
+  if (!el || !window.getSelection) return;
+  try {
+    var sel = window.getSelection();
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (e) {}
+})();
+  <\/script>
+</body></html>`;
 }
 
 /**
@@ -323,35 +373,13 @@ function openPreviewForGoogleDocs() {
   if (!plain.trim()) return;
 
   const fmt = output.dataset.outputFormat || getOutputFormat();
-  const iframeDoc = buildPreviewIframeDocument(plain, fmt);
-  const innerUrl = URL.createObjectURL(
-    new Blob([iframeDoc], { type: "text/html;charset=utf-8" })
+  const html = buildPreviewStandaloneDocument(plain, fmt);
+  const url = URL.createObjectURL(
+    new Blob([html], { type: "text/html;charset=utf-8" })
   );
-
-  const wrapper = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>OCR preview — copy for Google Docs</title>
-<style>
-  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; font-size: 14px; color: #202124;
-         display: flex; flex-direction: column; min-height: 100vh; }
-  .banner { flex: 0; background: #e8f0fe; border-bottom: 1px solid #b8c9ea; padding: 12px 16px; line-height: 1.55; }
-  kbd { font-family: inherit; border: 1px solid #888; border-radius: 4px; padding: 1px 6px; background: #fff; }
-  iframe { flex: 1; border: 0; width: 100%; min-height: 72vh; background: #fff; }
-</style></head><body>
-  <div class="banner">
-    <strong>Google Docs:</strong> click inside the <em>white preview</em> below, then
-    <kbd>Ctrl</kbd>+<kbd>A</kbd> / <kbd>⌘</kbd>+<kbd>A</kbd>, then
-    <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>⌘</kbd>+<kbd>C</kbd>, switch to your Doc, and paste.
-    ${fmt !== "html" ? "<br><span style=\"opacity:.9\">Tip: use <strong>HTML</strong> output for headings, lists, and tables in Docs.</span>" : ""}
-  </div>
-  <iframe sandbox="allow-same-origin" src="${innerUrl}" title="Formatted OCR preview"></iframe>
-</body></html>`;
-
-  const wrapUrl = URL.createObjectURL(
-    new Blob([wrapper], { type: "text/html;charset=utf-8" })
-  );
-  const w = window.open(wrapUrl, "_blank", "noopener,noreferrer");
+  const w = window.open(url, "_blank", "noopener,noreferrer");
   if (!w) {
-    URL.revokeObjectURL(innerUrl);
-    URL.revokeObjectURL(wrapUrl);
+    URL.revokeObjectURL(url);
     statusEl.classList.add("error");
     statusEl.textContent =
       "Pop-up blocked — allow pop-ups for this site, then try “Preview for Google Docs” again.";
@@ -359,7 +387,7 @@ function openPreviewForGoogleDocs() {
   }
   statusEl.classList.remove("error");
   statusEl.textContent =
-    "Preview opened — copy from inside the white area for best results in Google Docs.";
+    "Preview opened — copy the selected slide area, then paste into Google Docs.";
 }
 
 async function copyRichToClipboard(plain, htmlDocument) {
