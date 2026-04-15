@@ -16,6 +16,8 @@ Preserve structure and reading order:
 - Represent tables as GitHub-flavored Markdown tables when columns/rows are clear; otherwise align columns with spaces/monospace blocks.
 - Do not invent content; if text is unreadable, write [illegible].
 
+Do not add a slide number, "Slide N", or similar label—output only the slide content.
+
 Output only the transcribed content for this single image—no preamble or explanation.`;
 
 const SYSTEM_MARKDOWN_BATCH = `You are an OCR assistant for presentation slides. You will receive several images in order; each image is one slide.
@@ -29,6 +31,7 @@ Rules:
 - N must match the slide index you were told for that image position (do not skip or merge slides).
 - Preserve structure: headings as Markdown #/##, lists, GFM tables where clear, line breaks for layout.
 - No text before the first --- Slide --- line and no summary after the last block.
+- Inside each block (after the delimiter line), transcribe only the slide—do not repeat slide numbers or "Slide N" as a heading inside the body.
 - Do not invent content; use [illegible] for unreadable text.`;
 
 const SYSTEM_HTML_SINGLE = `You are an OCR assistant for presentation slides. Transcribe ALL visible text from the image.
@@ -37,6 +40,8 @@ Output a single HTML fragment only (no <!DOCTYPE>, no <html>, <head>, or <body> 
 Use semantic tags: <h1>–<h3> for titles, <p> for paragraphs, <br> only when line breaks are meaningful, <ul>/<ol>/<li> for lists.
 For tables use <table border="1"> with <thead>/<tbody>, <tr>, <th>, <td> when the layout is clearly tabular.
 Preserve reading order. Do not invent content; use <span class="illegible">[illegible]</span> for unreadable text.
+
+Do not add a slide number, "Slide N", or similar label in the HTML—only the slide content.
 
 Output only the HTML for this one slide—no preamble or markdown.`;
 
@@ -50,7 +55,8 @@ For EVERY image, output exactly one block in this exact format (slide numbers ar
 Rules:
 - N must match the slide index for that image position.
 - No text before the first --- Slide --- line. No markdown—only HTML inside each block.
-- No summary after the last block.`;
+- No summary after the last block.
+- Inside each block's HTML, do not add headings or text that only label the slide index—only the slide's real content.`;
 
 const $ = (id) => document.getElementById(id);
 
@@ -286,10 +292,7 @@ function buildRichDocInnerHtml(combinedText, format) {
       return combinedText;
     }
     return blocks
-      .map(
-        (b) =>
-          `<section class="slide"><h2 style="font-size:15pt;margin:0 0 0.5em;">Slide ${b.slide}</h2>${b.body}</section>`
-      )
+      .map((b) => `<section class="slide">${b.body}</section>`)
       .join('<hr style="margin:1.25em 0;border:none;border-top:1px solid #ccc"/>');
   }
   return `<pre style="white-space:pre-wrap;font-family:Calibri,Segoe UI,sans-serif;font-size:11pt;margin:0">${escaped}</pre>`;
@@ -458,7 +461,7 @@ form.addEventListener("submit", async (e) => {
           },
         ];
         raw = await callOpenAI(apiKey, system, userContent);
-        parts.push(`--- Slide ${start} ---\n${raw}`);
+        parts.push(raw);
       } else {
         const system =
           format === "html" ? SYSTEM_HTML_BATCH : SYSTEM_MARKDOWN_BATCH;
@@ -466,7 +469,7 @@ form.addEventListener("submit", async (e) => {
         raw = await callOpenAI(apiKey, system, userContent);
         const normalized = normalizeBatchBlocks(raw, start, batchFiles.length);
         for (const block of normalized) {
-          parts.push(`--- Slide ${block.slide} ---\n${block.body}`);
+          parts.push(block.body);
         }
       }
 
