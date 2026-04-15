@@ -148,6 +148,19 @@ function setBusy(busy) {
   outputFormatSelect.disabled = busy;
 }
 
+/** Enable copy/preview only when the output area has text (avoids stuck disabled state). */
+function updateOutputActions() {
+  const has = output.value.trim().length > 0;
+  copyBtn.disabled = !has;
+  copyWordBtn.disabled = !has;
+  if (previewDocsBtn) {
+    previewDocsBtn.disabled = !has;
+    previewDocsBtn.title = has
+      ? "Opens a new tab—click inside the preview, select all, copy, then paste into Google Docs."
+      : "Run recognition first; preview uses the text in the output box below.";
+  }
+}
+
 function getImageDetail() {
   return detailLowInput.checked ? "low" : "high";
 }
@@ -262,7 +275,7 @@ async function callOpenAI(apiKey, systemPrompt, userContent) {
   return text.trim();
 }
 
-function buildWordHtml(combinedText, format) {
+function buildRichDocInnerHtml(combinedText, format) {
   const escaped = combinedText
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -270,17 +283,83 @@ function buildWordHtml(combinedText, format) {
   if (format === "html") {
     const blocks = splitSlideResponse(combinedText);
     if (blocks.length === 0) {
-      return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${combinedText}</body></html>`;
+      return combinedText;
     }
-    const inner = blocks
+    return blocks
       .map(
         (b) =>
-          `<h2 style="font-size:14pt;margin:1em 0 0.5em;">Slide ${b.slide}</h2>${b.body}`
+          `<section class="slide"><h2 style="font-size:15pt;margin:0 0 0.5em;">Slide ${b.slide}</h2>${b.body}</section>`
       )
-      .join('<hr style="margin:1.5em 0;"/>');
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${inner}</body></html>`;
+      .join('<hr style="margin:1.25em 0;border:none;border-top:1px solid #ccc"/>');
   }
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><pre style="white-space:pre-wrap;font-family:Calibri,sans-serif;font-size:11pt;">${escaped}</pre></body></html>`;
+  return `<pre style="white-space:pre-wrap;font-family:Calibri,Segoe UI,sans-serif;font-size:11pt;margin:0">${escaped}</pre>`;
+}
+
+function buildWordHtml(combinedText, format) {
+  const inner = buildRichDocInnerHtml(combinedText, format);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${inner}</body></html>`;
+}
+
+/** Full document for iframe preview (sandboxed, no scripts). */
+function buildPreviewIframeDocument(combinedText, format) {
+  const inner = buildRichDocInnerHtml(combinedText, format);
+  const baseCss = `
+    body { font-family: Arial, Helvetica, sans-serif; margin: 1rem 1.25rem; color: #111; line-height: 1.45; }
+    pre { font-family: Consolas, "Courier New", monospace; font-size: 13px; }
+    table { border-collapse: collapse; }
+    td, th { border: 1px solid #333; padding: 4px 8px; vertical-align: top; }
+    ul, ol { margin: 0.5em 0; padding-left: 1.5em; }
+    .slide h2 { font-size: 15pt; }
+  `;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>OCR preview</title><style>${baseCss}</style></head><body>${inner}</body></html>`;
+}
+
+/**
+ * Google Docs often ignores text/html written via the Clipboard API. Copying from a normal
+ * rendered page produces clipboard data Docs accepts; we open that page in a new tab.
+ */
+function openPreviewForGoogleDocs() {
+  const plain = output.value;
+  if (!plain.trim()) return;
+
+  const fmt = output.dataset.outputFormat || getOutputFormat();
+  const iframeDoc = buildPreviewIframeDocument(plain, fmt);
+  const innerUrl = URL.createObjectURL(
+    new Blob([iframeDoc], { type: "text/html;charset=utf-8" })
+  );
+
+  const wrapper = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>OCR preview — copy for Google Docs</title>
+<style>
+  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; font-size: 14px; color: #202124;
+         display: flex; flex-direction: column; min-height: 100vh; }
+  .banner { flex: 0; background: #e8f0fe; border-bottom: 1px solid #b8c9ea; padding: 12px 16px; line-height: 1.55; }
+  kbd { font-family: inherit; border: 1px solid #888; border-radius: 4px; padding: 1px 6px; background: #fff; }
+  iframe { flex: 1; border: 0; width: 100%; min-height: 72vh; background: #fff; }
+</style></head><body>
+  <div class="banner">
+    <strong>Google Docs:</strong> click inside the <em>white preview</em> below, then
+    <kbd>Ctrl</kbd>+<kbd>A</kbd> / <kbd>⌘</kbd>+<kbd>A</kbd>, then
+    <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>⌘</kbd>+<kbd>C</kbd>, switch to your Doc, and paste.
+    ${fmt !== "html" ? "<br><span style=\"opacity:.9\">Tip: use <strong>HTML</strong> output for headings, lists, and tables in Docs.</span>" : ""}
+  </div>
+  <iframe sandbox="allow-same-origin" src="${innerUrl}" title="Formatted OCR preview"></iframe>
+</body></html>`;
+
+  const wrapUrl = URL.createObjectURL(
+    new Blob([wrapper], { type: "text/html;charset=utf-8" })
+  );
+  const w = window.open(wrapUrl, "_blank", "noopener,noreferrer");
+  if (!w) {
+    URL.revokeObjectURL(innerUrl);
+    URL.revokeObjectURL(wrapUrl);
+    statusEl.classList.add("error");
+    statusEl.textContent =
+      "Pop-up blocked — allow pop-ups for this site, then try “Preview for Google Docs” again.";
+    return;
+  }
+  statusEl.classList.remove("error");
+  statusEl.textContent =
+    "Preview opened — copy from inside the white area for best results in Google Docs.";
 }
 
 async function copyRichToClipboard(plain, htmlDocument) {
@@ -320,8 +399,7 @@ form.addEventListener("submit", async (e) => {
   statusEl.textContent = "Starting…";
   output.value = "";
   delete output.dataset.outputFormat;
-  copyBtn.disabled = true;
-  copyWordBtn.disabled = true;
+  updateOutputActions();
   setProgress(0, files.length);
   setBusy(true);
 
@@ -370,8 +448,7 @@ form.addEventListener("submit", async (e) => {
 
     output.value = parts.join("\n\n");
     output.dataset.outputFormat = format;
-    copyBtn.disabled = false;
-    copyWordBtn.disabled = false;
+    updateOutputActions();
     statusEl.textContent = "Done.";
   } catch (err) {
     statusEl.classList.add("error");
@@ -379,8 +456,7 @@ form.addEventListener("submit", async (e) => {
     if (parts.length) {
       output.value = parts.join("\n\n");
       output.dataset.outputFormat = format;
-      copyBtn.disabled = false;
-      copyWordBtn.disabled = false;
+      updateOutputActions();
     }
   } finally {
     setBusy(false);
@@ -407,14 +483,21 @@ copyWordBtn.addEventListener("click", async () => {
     statusEl.classList.remove("error");
     statusEl.textContent =
       fmt === "html"
-        ? "Copied with HTML for Word (paste with formatting)."
-        : "Copied; Word may show plain text—use HTML output format for richer paste.";
+        ? "Copied with HTML (works well in Word). For Google Docs use “Preview for Google Docs”."
+        : "Copied; use HTML output + “Preview for Google Docs” for rich paste into Docs.";
   } catch {
     statusEl.classList.add("error");
     statusEl.textContent = "Could not copy (browser blocked clipboard).";
   }
 });
 
+if (previewDocsBtn) {
+  previewDocsBtn.addEventListener("click", () => {
+    openPreviewForGoogleDocs();
+  });
+}
+
 loadKey();
 loadOptions();
 setFileHint(0);
+updateOutputActions();

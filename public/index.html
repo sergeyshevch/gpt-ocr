@@ -68,16 +68,19 @@
 
         <div class="actions">
           <button type="submit" id="submit-btn">Recognize text</button>
-          <button type="button" id="copy-btn" disabled>Copy as text</button>
-          <button type="button" id="copy-word-btn" disabled>Copy for Word</button>
-          <button type="button" id="preview-docs-btn" disabled>Preview for Google Docs</button>
         </div>
-        <p class="hint paste-hint">
-          Google Docs often drops formatting when pasting from the “Copy for Word” button. Open
-          <strong>Preview for Google Docs</strong>, click inside the preview, then select all and
-          copy—Docs usually keeps headings, lists, and tables from that clipboard.
-        </p>
       </form>
+
+      <div class="actions output-actions" aria-label="Copy and preview">
+        <button type="button" id="copy-btn" disabled>Copy as text</button>
+        <button type="button" id="copy-word-btn" disabled>Copy for Word</button>
+        <button type="button" id="preview-docs-btn" disabled>Preview for Google Docs</button>
+      </div>
+      <p class="hint paste-hint">
+        Google Docs often drops formatting when pasting from the “Copy for Word” button. Open
+        <strong>Preview for Google Docs</strong>, click inside the preview, then select all and
+        copy—Docs usually keeps headings, lists, and tables from that clipboard.
+      </p>
 
       <section class="progress-section" aria-label="Progress">
         <div class="progress-row">
