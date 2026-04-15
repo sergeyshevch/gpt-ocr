@@ -218,3 +218,7 @@ progress {
 .output-field {
   margin-top: 0.5rem;
 }
+
+.output-actions {
+  margin-top: 0.75rem;
+}
