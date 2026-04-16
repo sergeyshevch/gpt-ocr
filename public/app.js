@@ -176,13 +176,20 @@ function isHeic(file) {
   return name.endsWith(".heic") || name.endsWith(".heif");
 }
 
+let _libheif = null;
+
+async function getLibheif() {
+  if (_libheif) return _libheif;
+  const factory = (await import("https://cdn.jsdelivr.net/npm/libheif-js@1.19.8/libheif-wasm/libheif-bundle.mjs")).default;
+  _libheif = factory();
+  return _libheif;
+}
+
 async function convertHeicToJpeg(file) {
-  if (typeof libheif === "undefined") {
-    throw new Error("HEIC images detected but libheif-js failed to load.");
-  }
+  const lib = await getLibheif();
 
   const buffer = await file.arrayBuffer();
-  const decoder = new libheif.HeifDecoder();
+  const decoder = new lib.HeifDecoder();
   const images = decoder.decode(new Uint8Array(buffer));
   if (!images || images.length === 0) {
     throw new Error(`Could not decode HEIC file: ${file.name}`);
