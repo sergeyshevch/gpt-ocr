@@ -516,7 +516,7 @@ async function copyRichToClipboard(plain, htmlDocument) {
   ]);
 }
 
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 3;
 
 /** Rebuild output textarea from the slots array (only non-null entries, in order). */
 function renderSlots(slots, format) {
@@ -669,9 +669,13 @@ form.addEventListener("submit", async (e) => {
       renderSlots(slots, format);
     });
 
-    const retryConcurrency = Math.max(1, Math.floor(concurrency / 2));
     for (let attempt = 1; attempt <= MAX_RETRIES && failed.length > 0; attempt++) {
-      const delaySec = attempt * 10;
+      const isRateLimit = failed.some((f) =>
+        /rate limit|429|tokens? per min|TPM|RPM/i.test(f.error?.message || "")
+      );
+      const delaySec = isRateLimit ? attempt * 5 : attempt * 10;
+      const retryConcurrency = isRateLimit ? 1 : Math.max(1, Math.floor(concurrency / 2));
+
       statusEl.classList.remove("error");
       statusEl.textContent = `Retry ${attempt}/${MAX_RETRIES}: ${failed.length} batch(es), waiting ${delaySec}s…`;
       await new Promise((r) => setTimeout(r, delaySec * 1000));
