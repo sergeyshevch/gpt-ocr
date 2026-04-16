@@ -2,6 +2,7 @@ const STORAGE_KEY = "openai_api_key";
 const STORAGE_BATCH = "gpt_ocr_batch_size";
 const STORAGE_DETAIL = "gpt_ocr_detail_low";
 const STORAGE_FORMAT = "gpt_ocr_output_format";
+const STORAGE_CONCURRENCY = "gpt_ocr_concurrency";
 
 const MAX_FILES = 150;
 const MODEL = "gpt-4o-mini";
@@ -75,12 +76,45 @@ const copyBtn = $("copy-btn");
 const copyWordBtn = $("copy-word-btn");
 const previewDocsBtn = $("preview-docs-btn");
 const batchSizeSelect = $("batch-size");
+const concurrencySelect = $("concurrency");
 const detailLowInput = $("detail-low");
 const outputFormatSelect = $("output-format");
 const progressBar = $("progress-bar");
 const progressLabel = $("progress-label");
 const statusEl = $("status");
 const output = $("output");
+const bgWarning = $("bg-warning");
+
+let isProcessing = false;
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch { /* user denied or not supported */ }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!isProcessing) {
+    bgWarning.hidden = true;
+    return;
+  }
+  if (document.visibilityState === "hidden") {
+    bgWarning.hidden = false;
+  } else {
+    bgWarning.hidden = true;
+    requestWakeLock();
+  }
+});
 
 function loadKey() {
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -90,6 +124,8 @@ function loadKey() {
 function loadOptions() {
   const b = localStorage.getItem(STORAGE_BATCH);
   if (b && ["1", "2", "3", "5"].includes(b)) batchSizeSelect.value = b;
+  const c = localStorage.getItem(STORAGE_CONCURRENCY);
+  if (c && ["1", "2", "3", "5"].includes(c)) concurrencySelect.value = c;
   const d = localStorage.getItem(STORAGE_DETAIL);
   if (d === "1" || d === "true") detailLowInput.checked = true;
   const f = localStorage.getItem(STORAGE_FORMAT);
@@ -103,6 +139,7 @@ function saveKey() {
 
 function saveOptions() {
   localStorage.setItem(STORAGE_BATCH, batchSizeSelect.value);
+  localStorage.setItem(STORAGE_CONCURRENCY, concurrencySelect.value);
   localStorage.setItem(STORAGE_DETAIL, detailLowInput.checked ? "1" : "0");
   localStorage.setItem(STORAGE_FORMAT, outputFormatSelect.value);
 }
@@ -127,6 +164,7 @@ filesInput.addEventListener("change", () => {
 
 apiKeyInput.addEventListener("blur", saveKey);
 batchSizeSelect.addEventListener("change", saveOptions);
+concurrencySelect.addEventListener("change", saveOptions);
 detailLowInput.addEventListener("change", saveOptions);
 outputFormatSelect.addEventListener("change", saveOptions);
 
@@ -156,6 +194,7 @@ function setBusy(busy) {
   filesInput.disabled = busy;
   apiKeyInput.disabled = busy;
   batchSizeSelect.disabled = busy;
+  concurrencySelect.disabled = busy;
   detailLowInput.disabled = busy;
   outputFormatSelect.disabled = busy;
 }
@@ -183,6 +222,11 @@ function getOutputFormat() {
 
 function getBatchSize() {
   const n = parseInt(batchSizeSelect.value, 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(5, n) : 1;
+}
+
+function getConcurrency() {
+  const n = parseInt(concurrencySelect.value, 10);
   return Number.isFinite(n) && n >= 1 ? Math.min(5, n) : 1;
 }
 
@@ -256,36 +300,32 @@ function buildUserContentBatch(start, end, dataUrls, format) {
   return content;
 }
 
-async function callOpenAI(apiKey, systemPrompt, userContent) {
-  const body = {
-    model: MODEL,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
-    ],
-  };
+const ocrWorker = new Worker("ocr-worker.js");
+let workerMsgId = 0;
+const workerCallbacks = new Map();
 
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
+ocrWorker.addEventListener("message", (e) => {
+  const { id, result, error } = e.data;
+  const cb = workerCallbacks.get(id);
+  if (!cb) return;
+  workerCallbacks.delete(id);
+  if (error) cb.reject(new Error(error));
+  else cb.resolve(result);
+});
+
+function callOpenAI(apiKey, systemPrompt, userContent) {
+  return new Promise((resolve, reject) => {
+    const id = ++workerMsgId;
+    workerCallbacks.set(id, { resolve, reject });
+    ocrWorker.postMessage({
+      id,
+      apiUrl: API_URL,
+      apiKey,
+      model: MODEL,
+      systemPrompt,
+      userContent,
+    });
   });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg =
-      data.error?.message || data.message || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-
-  const text = data.choices?.[0]?.message?.content;
-  if (typeof text !== "string") {
-    throw new Error("Unexpected API response shape.");
-  }
-  return text.trim();
 }
 
 function buildRichDocInnerHtml(combinedText, format) {
@@ -411,6 +451,81 @@ async function copyRichToClipboard(plain, htmlDocument) {
   ]);
 }
 
+const MAX_RETRIES = 2;
+
+/** Rebuild output textarea from the slots array (only non-null entries, in order). */
+function renderSlots(slots, format) {
+  output.value = slots.filter((s) => s !== null).join("\n\n");
+  output.dataset.outputFormat = format;
+  updateOutputActions();
+}
+
+/** Fill slots for a single batch; throws on failure. */
+async function processBatch(batchFiles, fileIndex, slots, apiKey, format) {
+  const dataUrls = await Promise.all(
+    batchFiles.map((f) => readFileAsDataUrl(f))
+  );
+
+  const start = fileIndex + 1;
+  const end = fileIndex + batchFiles.length;
+
+  let raw;
+  if (batchFiles.length === 1) {
+    const system =
+      format === "html" ? SYSTEM_HTML_SINGLE : SYSTEM_MARKDOWN_SINGLE;
+    const detail = getImageDetail();
+    const userContent = [
+      {
+        type: "text",
+        text: "Transcribe this slide in the same language as on the slide; do not translate.",
+      },
+      {
+        type: "image_url",
+        image_url: { url: dataUrls[0], detail },
+      },
+    ];
+    raw = await callOpenAI(apiKey, system, userContent);
+    slots[fileIndex] = raw;
+  } else {
+    const system =
+      format === "html" ? SYSTEM_HTML_BATCH : SYSTEM_MARKDOWN_BATCH;
+    const userContent = buildUserContentBatch(start, end, dataUrls, format);
+    raw = await callOpenAI(apiKey, system, userContent);
+    const normalized = normalizeBatchBlocks(raw, start, batchFiles.length);
+    for (let j = 0; j < normalized.length; j++) {
+      slots[fileIndex + j] = normalized[j].body;
+    }
+  }
+}
+
+/**
+ * Run a list of async tasks with a concurrency cap.
+ * Each task is { run: async () => void, fileCount: number }.
+ * onTaskDone is called after each task finishes (success or fail).
+ * Returns an array of { task, error } for every failed task.
+ */
+async function runWithConcurrency(tasks, concurrency, onTaskDone) {
+  const failed = [];
+  let nextIdx = 0;
+
+  async function worker() {
+    while (nextIdx < tasks.length) {
+      const idx = nextIdx++;
+      const task = tasks[idx];
+      try {
+        await task.run();
+      } catch (err) {
+        failed.push({ task, error: err });
+      }
+      onTaskDone(task);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return failed;
+}
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   saveKey();
@@ -432,6 +547,7 @@ form.addEventListener("submit", async (e) => {
 
   const format = getOutputFormat();
   const batchSize = getBatchSize();
+  const concurrency = getConcurrency();
 
   statusEl.classList.remove("error");
   statusEl.textContent = "Starting…";
@@ -440,67 +556,69 @@ form.addEventListener("submit", async (e) => {
   updateOutputActions();
   setProgress(0, files.length);
   setBusy(true);
+  isProcessing = true;
+  bgWarning.hidden = true;
+  await requestWakeLock();
 
-  const parts = [];
+  const slots = new Array(files.length).fill(null);
   let processed = 0;
 
+  const tasks = [];
+  for (let i = 0; i < files.length; i += batchSize) {
+    const batchFiles = files.slice(i, i + batchSize);
+    const fileIndex = i;
+    tasks.push({
+      fileIndex,
+      batchFiles,
+      fileCount: batchFiles.length,
+      run: () => processBatch(batchFiles, fileIndex, slots, apiKey, format),
+    });
+  }
+
   try {
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batchFiles = files.slice(i, i + batchSize);
-      const start = i + 1;
-      const end = i + batchFiles.length;
-      statusEl.textContent = `Processing slides ${start}–${end} of ${files.length}…`;
+    statusEl.textContent = `Processing ${files.length} slides (${concurrency} in parallel)…`;
 
-      const dataUrls = await Promise.all(
-        batchFiles.map((f) => readFileAsDataUrl(f))
-      );
-
-      let raw;
-      if (batchFiles.length === 1) {
-        const system =
-          format === "html" ? SYSTEM_HTML_SINGLE : SYSTEM_MARKDOWN_SINGLE;
-        const detail = getImageDetail();
-        const userContent = [
-          {
-            type: "text",
-            text: "Transcribe this slide in the same language as on the slide; do not translate.",
-          },
-          {
-            type: "image_url",
-            image_url: { url: dataUrls[0], detail },
-          },
-        ];
-        raw = await callOpenAI(apiKey, system, userContent);
-        parts.push(raw);
-      } else {
-        const system =
-          format === "html" ? SYSTEM_HTML_BATCH : SYSTEM_MARKDOWN_BATCH;
-        const userContent = buildUserContentBatch(start, end, dataUrls, format);
-        raw = await callOpenAI(apiKey, system, userContent);
-        const normalized = normalizeBatchBlocks(raw, start, batchFiles.length);
-        for (const block of normalized) {
-          parts.push(block.body);
-        }
-      }
-
-      processed += batchFiles.length;
+    let failed = await runWithConcurrency(tasks, concurrency, (task) => {
+      processed += task.fileCount;
       setProgress(processed, files.length);
+      renderSlots(slots, format);
+    });
+
+    for (let attempt = 1; attempt <= MAX_RETRIES && failed.length > 0; attempt++) {
+      statusEl.classList.remove("error");
+      statusEl.textContent = `Retry ${attempt}/${MAX_RETRIES}: ${failed.length} batch(es)…`;
+
+      const retryTasks = failed.map((f) => ({
+        ...f.task,
+        run: () => processBatch(f.task.batchFiles, f.task.fileIndex, slots, apiKey, format),
+      }));
+
+      failed = await runWithConcurrency(retryTasks, concurrency, () => {
+        renderSlots(slots, format);
+      });
     }
 
-    output.value = parts.join("\n\n");
-    output.dataset.outputFormat = format;
-    updateOutputActions();
-    statusEl.textContent = "Done.";
+    if (failed.length > 0) {
+      const ranges = failed.map((f) => {
+        const s = f.task.fileIndex + 1;
+        const e = f.task.fileIndex + f.task.batchFiles.length;
+        return s === e ? `${s}` : `${s}–${e}`;
+      });
+      statusEl.classList.add("error");
+      statusEl.textContent = `Done with errors. Failed slides: ${ranges.join(", ")}. ${failed[0].error?.message || ""}`;
+    } else {
+      statusEl.classList.remove("error");
+      statusEl.textContent = "Done.";
+    }
   } catch (err) {
     statusEl.classList.add("error");
     statusEl.textContent = err instanceof Error ? err.message : String(err);
-    if (parts.length) {
-      output.value = parts.join("\n\n");
-      output.dataset.outputFormat = format;
-      updateOutputActions();
-    }
   } finally {
+    renderSlots(slots, format);
     setBusy(false);
+    isProcessing = false;
+    bgWarning.hidden = true;
+    releaseWakeLock();
   }
 });
 

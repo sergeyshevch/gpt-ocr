@@ -215,6 +215,27 @@ progress {
   color: var(--danger);
 }
 
+.bg-warning {
+  margin: 0 0 1rem;
+  padding: 0.65rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #fbbf24;
+  background: #422006;
+  border: 1px solid #854d0e;
+  border-radius: var(--radius);
+  animation: bg-pulse 2s ease-in-out infinite;
+}
+
+.bg-warning[hidden] {
+  display: none;
+}
+
+@keyframes bg-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .output-field {
   margin-top: 0.5rem;
 }
