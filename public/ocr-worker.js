@@ -20,6 +20,7 @@ async function callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
   });
 
   const data = await res.json().catch(() => ({}));

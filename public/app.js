@@ -168,6 +168,31 @@ concurrencySelect.addEventListener("change", saveOptions);
 detailLowInput.addEventListener("change", saveOptions);
 outputFormatSelect.addEventListener("change", saveOptions);
 
+const HEIC_TYPES = ["image/heic", "image/heif"];
+
+function isHeic(file) {
+  if (HEIC_TYPES.includes(file.type)) return true;
+  const name = file.name.toLowerCase();
+  return name.endsWith(".heic") || name.endsWith(".heif");
+}
+
+async function convertHeicToJpeg(file) {
+  if (typeof heic2any === "undefined") {
+    throw new Error("HEIC images detected but heic2any library failed to load.");
+  }
+  const blob = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.92 });
+  return Array.isArray(blob) ? blob[0] : blob;
+}
+
+async function convertFiles(files, onProgress) {
+  const result = [];
+  for (let i = 0; i < files.length; i++) {
+    result.push(isHeic(files[i]) ? await convertHeicToJpeg(files[i]) : files[i]);
+    if (onProgress) onProgress(i + 1, files.length);
+  }
+  return result;
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -560,12 +585,32 @@ form.addEventListener("submit", async (e) => {
   bgWarning.hidden = true;
   await requestWakeLock();
 
-  const slots = new Array(files.length).fill(null);
+  const hasHeic = files.some(isHeic);
+  let readyFiles = files;
+  if (hasHeic) {
+    statusEl.textContent = `Converting HEIC images to JPEG…`;
+    try {
+      readyFiles = await convertFiles(files, (done, total) => {
+        setProgress(done, total);
+        statusEl.textContent = `Converting HEIC images… ${done}/${total}`;
+      });
+    } catch (err) {
+      statusEl.classList.add("error");
+      statusEl.textContent = `HEIC conversion failed: ${err.message}`;
+      setBusy(false);
+      isProcessing = false;
+      releaseWakeLock();
+      return;
+    }
+    setProgress(0, readyFiles.length);
+  }
+
+  const slots = new Array(readyFiles.length).fill(null);
   let processed = 0;
 
   const tasks = [];
-  for (let i = 0; i < files.length; i += batchSize) {
-    const batchFiles = files.slice(i, i + batchSize);
+  for (let i = 0; i < readyFiles.length; i += batchSize) {
+    const batchFiles = readyFiles.slice(i, i + batchSize);
     const fileIndex = i;
     tasks.push({
       fileIndex,
@@ -576,24 +621,28 @@ form.addEventListener("submit", async (e) => {
   }
 
   try {
-    statusEl.textContent = `Processing ${files.length} slides (${concurrency} in parallel)…`;
+    statusEl.textContent = `Processing ${readyFiles.length} slides (${concurrency} in parallel)…`;
 
     let failed = await runWithConcurrency(tasks, concurrency, (task) => {
       processed += task.fileCount;
-      setProgress(processed, files.length);
+      setProgress(processed, readyFiles.length);
       renderSlots(slots, format);
     });
 
+    const retryConcurrency = Math.max(1, Math.floor(concurrency / 2));
     for (let attempt = 1; attempt <= MAX_RETRIES && failed.length > 0; attempt++) {
+      const delaySec = attempt * 10;
       statusEl.classList.remove("error");
-      statusEl.textContent = `Retry ${attempt}/${MAX_RETRIES}: ${failed.length} batch(es)…`;
+      statusEl.textContent = `Retry ${attempt}/${MAX_RETRIES}: ${failed.length} batch(es), waiting ${delaySec}s…`;
+      await new Promise((r) => setTimeout(r, delaySec * 1000));
 
+      statusEl.textContent = `Retry ${attempt}/${MAX_RETRIES}: ${failed.length} batch(es)…`;
       const retryTasks = failed.map((f) => ({
         ...f.task,
         run: () => processBatch(f.task.batchFiles, f.task.fileIndex, slots, apiKey, format),
       }));
 
-      failed = await runWithConcurrency(retryTasks, concurrency, () => {
+      failed = await runWithConcurrency(retryTasks, retryConcurrency, () => {
         renderSlots(slots, format);
       });
     }
