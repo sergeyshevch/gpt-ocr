@@ -177,11 +177,43 @@ function isHeic(file) {
 }
 
 async function convertHeicToJpeg(file) {
-  if (typeof heic2any === "undefined") {
-    throw new Error("HEIC images detected but heic2any library failed to load.");
+  if (typeof libheif === "undefined") {
+    throw new Error("HEIC images detected but libheif-js failed to load.");
   }
-  const blob = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.92 });
-  return Array.isArray(blob) ? blob[0] : blob;
+
+  const buffer = await file.arrayBuffer();
+  const decoder = new libheif.HeifDecoder();
+  const images = decoder.decode(new Uint8Array(buffer));
+  if (!images || images.length === 0) {
+    throw new Error(`Could not decode HEIC file: ${file.name}`);
+  }
+
+  const image = images[0];
+  const width = image.get_width();
+  const height = image.get_height();
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.createImageData(width, height);
+
+  await new Promise((resolve, reject) => {
+    image.display(imageData, (displayData) => {
+      if (!displayData) return reject(new Error(`HEIF decode error: ${file.name}`));
+      resolve();
+    });
+  });
+
+  ctx.putImageData(imageData, 0, 0);
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("Canvas toBlob failed"))),
+      "image/jpeg",
+      0.92
+    );
+  });
 }
 
 async function convertFiles(files, onProgress) {
