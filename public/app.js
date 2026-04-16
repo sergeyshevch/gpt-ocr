@@ -243,6 +243,7 @@ function readFileAsDataUrl(file) {
 
 function getFilesList() {
   const list = Array.from(filesInput.files);
+  list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
   return list.slice(0, MAX_FILES);
 }
 
