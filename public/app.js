@@ -5,6 +5,7 @@ const STORAGE_FORMAT = "gpt_ocr_output_format";
 const STORAGE_CONCURRENCY = "gpt_ocr_concurrency";
 const STORAGE_LANG = "gpt_ocr_expected_lang";
 const STORAGE_MODEL = "gpt_ocr_model";
+const STORAGE_THINKING = "gpt_ocr_thinking";
 
 const MAX_FILES = 150;
 const AVAILABLE_MODELS = ["gpt-4o", "gpt-4o-mini"];
@@ -94,6 +95,7 @@ const previewDocsBtn = $("preview-docs-btn");
 const modelSelect = $("model");
 const batchSizeSelect = $("batch-size");
 const concurrencySelect = $("concurrency");
+const thinkingInput = $("thinking");
 const detailLowInput = $("detail-low");
 const expectedLangInput = $("expected-lang");
 const outputFormatSelect = $("output-format");
@@ -146,6 +148,8 @@ function loadOptions() {
   if (b && ["1", "2", "3", "5"].includes(b)) batchSizeSelect.value = b;
   const c = localStorage.getItem(STORAGE_CONCURRENCY);
   if (c && ["1", "2", "3", "5"].includes(c)) concurrencySelect.value = c;
+  const t = localStorage.getItem(STORAGE_THINKING);
+  if (t === "1" || t === "true") thinkingInput.checked = true;
   const d = localStorage.getItem(STORAGE_DETAIL);
   if (d === "1" || d === "true") detailLowInput.checked = true;
   const lang = localStorage.getItem(STORAGE_LANG);
@@ -163,6 +167,7 @@ function saveOptions() {
   localStorage.setItem(STORAGE_MODEL, modelSelect.value);
   localStorage.setItem(STORAGE_BATCH, batchSizeSelect.value);
   localStorage.setItem(STORAGE_CONCURRENCY, concurrencySelect.value);
+  localStorage.setItem(STORAGE_THINKING, thinkingInput.checked ? "1" : "0");
   localStorage.setItem(STORAGE_DETAIL, detailLowInput.checked ? "1" : "0");
   localStorage.setItem(STORAGE_LANG, expectedLangInput.value.trim());
   localStorage.setItem(STORAGE_FORMAT, outputFormatSelect.value);
@@ -190,6 +195,7 @@ apiKeyInput.addEventListener("blur", saveKey);
 modelSelect.addEventListener("change", saveOptions);
 batchSizeSelect.addEventListener("change", saveOptions);
 concurrencySelect.addEventListener("change", saveOptions);
+thinkingInput.addEventListener("change", saveOptions);
 detailLowInput.addEventListener("change", saveOptions);
 expectedLangInput.addEventListener("change", saveOptions);
 outputFormatSelect.addEventListener("change", saveOptions);
@@ -287,6 +293,7 @@ function setBusy(busy) {
   modelSelect.disabled = busy;
   batchSizeSelect.disabled = busy;
   concurrencySelect.disabled = busy;
+  thinkingInput.disabled = busy;
   detailLowInput.disabled = busy;
   expectedLangInput.disabled = busy;
   outputFormatSelect.disabled = busy;
@@ -306,8 +313,13 @@ function updateOutputActions() {
 }
 
 function getModel() {
+  if (thinkingInput.checked) return "o4-mini";
   const v = modelSelect.value;
   return AVAILABLE_MODELS.includes(v) ? v : DEFAULT_MODEL;
+}
+
+function getThinking() {
+  return thinkingInput.checked;
 }
 
 function getImageDetail() {
@@ -436,6 +448,7 @@ function callOpenAI(apiKey, systemPrompt, userContent) {
       apiUrl: API_URL,
       apiKey,
       model: getModel(),
+      thinking: getThinking(),
       systemPrompt,
       userContent,
     });

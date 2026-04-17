@@ -28,8 +28,19 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent) {
-  const body = {
+function buildBody(model, thinking, systemPrompt, userContent) {
+  if (thinking) {
+    return {
+      model,
+      max_completion_tokens: 32768,
+      reasoning_effort: "high",
+      messages: [
+        { role: "developer", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+    };
+  }
+  return {
     model,
     max_tokens: 16384,
     messages: [
@@ -37,8 +48,12 @@ async function callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent) {
       { role: "user", content: userContent },
     ],
   };
+}
 
+async function callOpenAI(apiUrl, apiKey, model, thinking, systemPrompt, userContent) {
+  const body = buildBody(model, thinking, systemPrompt, userContent);
   const payload = JSON.stringify(body);
+  const timeout = thinking ? 300_000 : 180_000;
 
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(apiUrl, {
@@ -48,7 +63,7 @@ async function callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: payload,
-      signal: AbortSignal.timeout(180_000),
+      signal: AbortSignal.timeout(timeout),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -83,9 +98,9 @@ async function callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent) {
 }
 
 self.addEventListener("message", async (e) => {
-  const { id, apiUrl, apiKey, model, systemPrompt, userContent } = e.data;
+  const { id, apiUrl, apiKey, model, thinking, systemPrompt, userContent } = e.data;
   try {
-    const result = await callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent);
+    const result = await callOpenAI(apiUrl, apiKey, model, thinking, systemPrompt, userContent);
     self.postMessage({ id, result });
   } catch (err) {
     self.postMessage({ id, error: err.message || String(err) });
