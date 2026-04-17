@@ -4,9 +4,11 @@ const STORAGE_DETAIL = "gpt_ocr_detail_low";
 const STORAGE_FORMAT = "gpt_ocr_output_format";
 const STORAGE_CONCURRENCY = "gpt_ocr_concurrency";
 const STORAGE_LANG = "gpt_ocr_expected_lang";
+const STORAGE_MODEL = "gpt_ocr_model";
 
 const MAX_FILES = 150;
-const MODEL = "gpt-4o-mini";
+const AVAILABLE_MODELS = ["gpt-4o", "gpt-4o-mini"];
+const DEFAULT_MODEL = "gpt-4o";
 const API_URL = "https://api.openai.com/v1/chat/completions";
 
 const SYSTEM_MARKDOWN_SINGLE = `You are a verbatim OCR machine. Your ONLY job is to copy every character visible on the slide image—nothing more, nothing less.
@@ -89,6 +91,7 @@ const submitBtn = $("submit-btn");
 const copyBtn = $("copy-btn");
 const copyWordBtn = $("copy-word-btn");
 const previewDocsBtn = $("preview-docs-btn");
+const modelSelect = $("model");
 const batchSizeSelect = $("batch-size");
 const concurrencySelect = $("concurrency");
 const detailLowInput = $("detail-low");
@@ -137,6 +140,8 @@ function loadKey() {
 }
 
 function loadOptions() {
+  const m = localStorage.getItem(STORAGE_MODEL);
+  if (m && AVAILABLE_MODELS.includes(m)) modelSelect.value = m;
   const b = localStorage.getItem(STORAGE_BATCH);
   if (b && ["1", "2", "3", "5"].includes(b)) batchSizeSelect.value = b;
   const c = localStorage.getItem(STORAGE_CONCURRENCY);
@@ -155,6 +160,7 @@ function saveKey() {
 }
 
 function saveOptions() {
+  localStorage.setItem(STORAGE_MODEL, modelSelect.value);
   localStorage.setItem(STORAGE_BATCH, batchSizeSelect.value);
   localStorage.setItem(STORAGE_CONCURRENCY, concurrencySelect.value);
   localStorage.setItem(STORAGE_DETAIL, detailLowInput.checked ? "1" : "0");
@@ -181,6 +187,7 @@ filesInput.addEventListener("change", () => {
 });
 
 apiKeyInput.addEventListener("blur", saveKey);
+modelSelect.addEventListener("change", saveOptions);
 batchSizeSelect.addEventListener("change", saveOptions);
 concurrencySelect.addEventListener("change", saveOptions);
 detailLowInput.addEventListener("change", saveOptions);
@@ -277,6 +284,7 @@ function setBusy(busy) {
   submitBtn.disabled = busy;
   filesInput.disabled = busy;
   apiKeyInput.disabled = busy;
+  modelSelect.disabled = busy;
   batchSizeSelect.disabled = busy;
   concurrencySelect.disabled = busy;
   detailLowInput.disabled = busy;
@@ -295,6 +303,11 @@ function updateOutputActions() {
       ? "Opens one new tab with formatted content (no nested frames)—copy, then paste into Google Docs."
       : "Run recognition first; preview uses the text in the output box below.";
   }
+}
+
+function getModel() {
+  const v = modelSelect.value;
+  return AVAILABLE_MODELS.includes(v) ? v : DEFAULT_MODEL;
 }
 
 function getImageDetail() {
@@ -422,7 +435,7 @@ function callOpenAI(apiKey, systemPrompt, userContent) {
       id,
       apiUrl: API_URL,
       apiKey,
-      model: MODEL,
+      model: getModel(),
       systemPrompt,
       userContent,
     });

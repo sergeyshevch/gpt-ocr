@@ -31,6 +31,7 @@ function sleep(ms) {
 async function callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent) {
   const body = {
     model,
+    max_tokens: 16384,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
@@ -47,7 +48,7 @@ async function callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: payload,
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(180_000),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -65,10 +66,18 @@ async function callOpenAI(apiUrl, apiKey, model, systemPrompt, userContent) {
       throw new Error(msg);
     }
 
-    const text = data.choices?.[0]?.message?.content;
+    const choice = data.choices?.[0];
+    const text = choice?.message?.content;
     if (typeof text !== "string") {
       throw new Error("Unexpected API response shape.");
     }
+
+    if (choice.finish_reason === "length") {
+      throw new Error(
+        "Model output was cut off (token limit). Try reducing batch size to 1."
+      );
+    }
+
     return text.trim();
   }
 }
