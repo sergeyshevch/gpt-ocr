@@ -9,63 +9,75 @@ const MAX_FILES = 150;
 const MODEL = "gpt-4o-mini";
 const API_URL = "https://api.openai.com/v1/chat/completions";
 
-const SYSTEM_MARKDOWN_SINGLE = `You are an OCR assistant for presentation slides. Recognize and transcribe ALL visible text from the image exactly as written—do not edit, rephrase, correct spelling or grammar, reorder, summarize, or alter the content in any way.
+const SYSTEM_MARKDOWN_SINGLE = `You are a verbatim OCR machine. Your ONLY job is to copy every character visible on the slide image—nothing more, nothing less.
 
-Language: keep the exact same language(s) and script as on the slide (including mixed languages). Never translate—do not rewrite into English or any other language.
+STRICT RULES:
+- Copy text EXACTLY character-by-character as it appears on the slide. Do not fix typos, do not correct grammar, do not improve wording.
+- NEVER add text that is not on the slide. If you are uncertain about a word, write [illegible]—do not guess.
+- NEVER remove or skip text that IS on the slide.
+- NEVER translate, transliterate, or substitute words into another language. Keep every word in the original language and script.
+- NEVER paraphrase, summarize, or rephrase. The output must match the slide word-for-word.
+- Do not add slide numbers, titles like "Slide N", preamble, or explanation—output ONLY the text from the slide.
 
-Preserve structure and reading order:
-- Use line breaks to match vertical layout where it helps readability.
-- Use Markdown headings (#, ##) only when the slide clearly uses title vs body hierarchy.
-- Use bullet or numbered lists when the slide uses lists.
-- Represent tables as GitHub-flavored Markdown tables when columns/rows are clear; otherwise align columns with spaces/monospace blocks.
-- Do not invent content; if text is unreadable, write [illegible].
+Formatting (Markdown):
+- Use headings (#, ##) only when the slide clearly shows title hierarchy.
+- Use bullet/numbered lists when the slide uses them.
+- Use GFM tables when columns/rows are clear.
+- Use line breaks to reflect the visual layout.`;
 
-Do not add a slide number, "Slide N", or similar label—output only the slide content.
+const SYSTEM_MARKDOWN_BATCH = `You are a verbatim OCR machine. You will receive several slide images. Your ONLY job is to copy every character visible on each slide—nothing more, nothing less.
 
-Output only the transcribed content for this single image—no preamble or explanation.`;
+STRICT RULES:
+- Copy text EXACTLY character-by-character. Do not fix typos, grammar, or wording.
+- NEVER add text that is not on the slide. If uncertain, write [illegible].
+- NEVER remove or skip text that IS on the slide.
+- NEVER translate, transliterate, or substitute words into another language.
+- NEVER paraphrase, summarize, or rephrase.
 
-const SYSTEM_MARKDOWN_BATCH = `You are an OCR assistant for presentation slides. You will receive several images in order; each image is one slide. Recognize and transcribe ALL visible text exactly as written—do not edit, rephrase, correct spelling or grammar, reorder, summarize, or alter the content in any way.
-
-For EVERY image, output exactly one block in this exact format (use the slide numbers given in the user message):
-
---- Slide N ---
-<Markdown transcription for that slide only>
-
-Rules:
-- N must match the slide index you were told for that image position (do not skip or merge slides).
-- Language: keep the exact same language(s) and script as on each slide; never translate.
-- Preserve structure: headings as Markdown #/##, lists, GFM tables where clear, line breaks for layout.
-- No text before the first --- Slide --- line and no summary after the last block.
-- Inside each block (after the delimiter line), transcribe only the slide—do not repeat slide numbers or "Slide N" as a heading inside the body.
-- Do not invent or edit content; use [illegible] for unreadable text.`;
-
-const SYSTEM_HTML_SINGLE = `You are an OCR assistant for presentation slides. Recognize and transcribe ALL visible text from the image exactly as written—do not edit, rephrase, correct spelling or grammar, reorder, summarize, or alter the content in any way.
-
-Language: keep the exact same language(s) and script as on the slide (including mixed languages). Never translate—do not rewrite into English or any other language.
-
-Output a single HTML fragment only (no <!DOCTYPE>, no <html>, <head>, or <body> wrapper).
-Use semantic tags: <h1>–<h3> for titles, <p> for paragraphs, <br> only when line breaks are meaningful, <ul>/<ol>/<li> for lists.
-For tables use <table border="1"> with <thead>/<tbody>, <tr>, <th>, <td> when the layout is clearly tabular.
-Preserve reading order. Do not invent or edit content; use <span class="illegible">[illegible]</span> for unreadable text.
-
-Do not add a slide number, "Slide N", or similar label in the HTML—only the slide content.
-
-Output only the HTML for this one slide—no preamble or markdown.`;
-
-const SYSTEM_HTML_BATCH = `You are an OCR assistant for presentation slides. You will receive several images in order; each image is one slide. Recognize and transcribe ALL visible text exactly as written—do not edit, rephrase, correct spelling or grammar, reorder, summarize, or alter the content in any way.
-
-For EVERY image, output exactly one block in this exact format (slide numbers are given in the user message):
+Output format — for EVERY image, output exactly:
 
 --- Slide N ---
-<HTML fragment for that slide only — same rules as single-slide HTML: no document wrapper, semantic tags, tables with border="1" where appropriate>
+<verbatim Markdown transcription>
 
-Rules:
-- N must match the slide index for that image position.
-- Language: keep the exact same language(s) and script as on each slide; never translate.
-- No text before the first --- Slide --- line. No markdown—only HTML inside each block.
-- No summary after the last block.
-- Inside each block's HTML, do not add headings or text that only label the slide index—only the slide's real content.
-- Do not invent or edit content; use <span class="illegible">[illegible]</span> for unreadable text.`;
+- N must match the slide index from the user message. Do not skip or merge slides.
+- No text before the first --- Slide --- line. No summary after the last block.
+- Inside each block: only the slide text. Do not repeat "Slide N" as a heading.
+- Use Markdown headings, lists, GFM tables, and line breaks to reflect visual layout.`;
+
+const SYSTEM_HTML_SINGLE = `You are a verbatim OCR machine. Your ONLY job is to copy every character visible on the slide image—nothing more, nothing less.
+
+STRICT RULES:
+- Copy text EXACTLY character-by-character as it appears on the slide. Do not fix typos, do not correct grammar, do not improve wording.
+- NEVER add text that is not on the slide. If you are uncertain about a word, write <span class="illegible">[illegible]</span>—do not guess.
+- NEVER remove or skip text that IS on the slide.
+- NEVER translate, transliterate, or substitute words into another language. Keep every word in the original language and script.
+- NEVER paraphrase, summarize, or rephrase. The output must match the slide word-for-word.
+- Do not add slide numbers, titles like "Slide N", preamble, or explanation—output ONLY the text from the slide.
+
+Formatting (HTML fragment only — no <!DOCTYPE>, <html>, <head>, or <body>):
+- Use <h1>–<h3> for titles, <p> for body text, <ul>/<ol>/<li> for lists.
+- Use <table border="1"> with <thead>/<tbody> when layout is tabular.
+- Use <br> only for meaningful line breaks. Preserve reading order.`;
+
+const SYSTEM_HTML_BATCH = `You are a verbatim OCR machine. You will receive several slide images. Your ONLY job is to copy every character visible on each slide—nothing more, nothing less.
+
+STRICT RULES:
+- Copy text EXACTLY character-by-character. Do not fix typos, grammar, or wording.
+- NEVER add text that is not on the slide. If uncertain, write <span class="illegible">[illegible]</span>.
+- NEVER remove or skip text that IS on the slide.
+- NEVER translate, transliterate, or substitute words into another language.
+- NEVER paraphrase, summarize, or rephrase.
+
+Output format — for EVERY image, output exactly:
+
+--- Slide N ---
+<verbatim HTML fragment — no document wrapper>
+
+- N must match the slide index from the user message. Do not skip or merge slides.
+- No text before the first --- Slide --- line. No summary after the last block.
+- Inside each block: only the slide text as HTML. Do not repeat "Slide N" as a heading.
+- Use <h1>–<h3>, <p>, <ul>/<ol>/<li>, <table border="1"> to reflect visual layout.
+- No markdown inside blocks—only HTML.`;
 
 const $ = (id) => document.getElementById(id);
 
@@ -298,7 +310,7 @@ function buildSystemPrompt(base) {
   if (!lang) return base;
   return (
     base +
-    `\n\nIMPORTANT — expected language: the slides are in ${lang}. Output ALL text in ${lang} exactly as written. Do not transliterate, translate, or substitute words into any other language. Even if some words look similar to another language, keep them in ${lang} as they appear on the slide.`
+    `\n\nCRITICAL LANGUAGE CONSTRAINT: The slides are written in ${lang}. Every single word you output MUST be in ${lang}, exactly as it appears on the slide. Do NOT replace any ${lang} word with an English, Ukrainian, or any other language equivalent. Do NOT transliterate. If a word looks like it could be another language but appears on a ${lang} slide, output it exactly as shown.`
   );
 }
 
@@ -368,12 +380,11 @@ function buildUserContentBatch(start, end, dataUrls, format) {
   const n = dataUrls.length;
   const lang = getExpectedLang();
   const langNote = lang
-    ? ` The expected language is ${lang}—output only in ${lang}, do not translate or mix languages.`
+    ? ` The text is in ${lang}. Every word in your output MUST be in ${lang}—do not translate or replace any word with another language.`
     : "";
   const lines = [
-    `There are ${n} images in order.`,
-    `They are slides ${start} through ${end} (inclusive).`,
-    `Transcribe each slide in the same language(s) and script as printed on the slide; do not translate.${langNote}`,
+    `There are ${n} images in order. Slides ${start} through ${end} (inclusive).`,
+    `Copy every word from each slide exactly as written. Do not add, remove, rephrase, or translate anything.${langNote}`,
     `For each image, output one block starting with exactly "--- Slide K ---" where K is that slide's number (${start}…${end}).`,
     format === "html"
       ? "Inside each block, output only an HTML fragment (no wrapper document)."
@@ -567,12 +578,12 @@ async function processBatch(batchFiles, fileIndex, slots, apiKey, format) {
     const detail = getImageDetail();
     const lang = getExpectedLang();
     const langNote = lang
-      ? ` The expected language is ${lang}—output only in ${lang}, do not translate or mix languages.`
+      ? ` The text is in ${lang}. Every word in your output MUST be in ${lang}—do not translate or replace any word with another language.`
       : "";
     const userContent = [
       {
         type: "text",
-        text: `Transcribe this slide in the same language as on the slide; do not translate.${langNote}`,
+        text: `Copy every word from this slide exactly as written. Do not add, remove, rephrase, or translate anything.${langNote}`,
       },
       {
         type: "image_url",
