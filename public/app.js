@@ -3,12 +3,13 @@ const STORAGE_BATCH = "gpt_ocr_batch_size";
 const STORAGE_DETAIL = "gpt_ocr_detail_low";
 const STORAGE_FORMAT = "gpt_ocr_output_format";
 const STORAGE_CONCURRENCY = "gpt_ocr_concurrency";
+const STORAGE_LANG = "gpt_ocr_expected_lang";
 
 const MAX_FILES = 150;
 const MODEL = "gpt-4o-mini";
 const API_URL = "https://api.openai.com/v1/chat/completions";
 
-const SYSTEM_MARKDOWN_SINGLE = `You are an OCR assistant for presentation slides. Transcribe ALL visible text from the image.
+const SYSTEM_MARKDOWN_SINGLE = `You are an OCR assistant for presentation slides. Recognize and transcribe ALL visible text from the image exactly as written—do not edit, rephrase, correct spelling or grammar, reorder, summarize, or alter the content in any way.
 
 Language: keep the exact same language(s) and script as on the slide (including mixed languages). Never translate—do not rewrite into English or any other language.
 
@@ -23,7 +24,7 @@ Do not add a slide number, "Slide N", or similar label—output only the slide c
 
 Output only the transcribed content for this single image—no preamble or explanation.`;
 
-const SYSTEM_MARKDOWN_BATCH = `You are an OCR assistant for presentation slides. You will receive several images in order; each image is one slide.
+const SYSTEM_MARKDOWN_BATCH = `You are an OCR assistant for presentation slides. You will receive several images in order; each image is one slide. Recognize and transcribe ALL visible text exactly as written—do not edit, rephrase, correct spelling or grammar, reorder, summarize, or alter the content in any way.
 
 For EVERY image, output exactly one block in this exact format (use the slide numbers given in the user message):
 
@@ -36,22 +37,22 @@ Rules:
 - Preserve structure: headings as Markdown #/##, lists, GFM tables where clear, line breaks for layout.
 - No text before the first --- Slide --- line and no summary after the last block.
 - Inside each block (after the delimiter line), transcribe only the slide—do not repeat slide numbers or "Slide N" as a heading inside the body.
-- Do not invent content; use [illegible] for unreadable text.`;
+- Do not invent or edit content; use [illegible] for unreadable text.`;
 
-const SYSTEM_HTML_SINGLE = `You are an OCR assistant for presentation slides. Transcribe ALL visible text from the image.
+const SYSTEM_HTML_SINGLE = `You are an OCR assistant for presentation slides. Recognize and transcribe ALL visible text from the image exactly as written—do not edit, rephrase, correct spelling or grammar, reorder, summarize, or alter the content in any way.
 
 Language: keep the exact same language(s) and script as on the slide (including mixed languages). Never translate—do not rewrite into English or any other language.
 
 Output a single HTML fragment only (no <!DOCTYPE>, no <html>, <head>, or <body> wrapper).
 Use semantic tags: <h1>–<h3> for titles, <p> for paragraphs, <br> only when line breaks are meaningful, <ul>/<ol>/<li> for lists.
 For tables use <table border="1"> with <thead>/<tbody>, <tr>, <th>, <td> when the layout is clearly tabular.
-Preserve reading order. Do not invent content; use <span class="illegible">[illegible]</span> for unreadable text.
+Preserve reading order. Do not invent or edit content; use <span class="illegible">[illegible]</span> for unreadable text.
 
 Do not add a slide number, "Slide N", or similar label in the HTML—only the slide content.
 
 Output only the HTML for this one slide—no preamble or markdown.`;
 
-const SYSTEM_HTML_BATCH = `You are an OCR assistant for presentation slides. You will receive several images in order; each image is one slide.
+const SYSTEM_HTML_BATCH = `You are an OCR assistant for presentation slides. You will receive several images in order; each image is one slide. Recognize and transcribe ALL visible text exactly as written—do not edit, rephrase, correct spelling or grammar, reorder, summarize, or alter the content in any way.
 
 For EVERY image, output exactly one block in this exact format (slide numbers are given in the user message):
 
@@ -63,7 +64,8 @@ Rules:
 - Language: keep the exact same language(s) and script as on each slide; never translate.
 - No text before the first --- Slide --- line. No markdown—only HTML inside each block.
 - No summary after the last block.
-- Inside each block's HTML, do not add headings or text that only label the slide index—only the slide's real content.`;
+- Inside each block's HTML, do not add headings or text that only label the slide index—only the slide's real content.
+- Do not invent or edit content; use <span class="illegible">[illegible]</span> for unreadable text.`;
 
 const $ = (id) => document.getElementById(id);
 
@@ -78,6 +80,7 @@ const previewDocsBtn = $("preview-docs-btn");
 const batchSizeSelect = $("batch-size");
 const concurrencySelect = $("concurrency");
 const detailLowInput = $("detail-low");
+const expectedLangInput = $("expected-lang");
 const outputFormatSelect = $("output-format");
 const progressBar = $("progress-bar");
 const progressLabel = $("progress-label");
@@ -128,6 +131,8 @@ function loadOptions() {
   if (c && ["1", "2", "3", "5"].includes(c)) concurrencySelect.value = c;
   const d = localStorage.getItem(STORAGE_DETAIL);
   if (d === "1" || d === "true") detailLowInput.checked = true;
+  const lang = localStorage.getItem(STORAGE_LANG);
+  if (lang) expectedLangInput.value = lang;
   const f = localStorage.getItem(STORAGE_FORMAT);
   if (f === "html" || f === "markdown") outputFormatSelect.value = f;
 }
@@ -141,6 +146,7 @@ function saveOptions() {
   localStorage.setItem(STORAGE_BATCH, batchSizeSelect.value);
   localStorage.setItem(STORAGE_CONCURRENCY, concurrencySelect.value);
   localStorage.setItem(STORAGE_DETAIL, detailLowInput.checked ? "1" : "0");
+  localStorage.setItem(STORAGE_LANG, expectedLangInput.value.trim());
   localStorage.setItem(STORAGE_FORMAT, outputFormatSelect.value);
 }
 
@@ -166,6 +172,7 @@ apiKeyInput.addEventListener("blur", saveKey);
 batchSizeSelect.addEventListener("change", saveOptions);
 concurrencySelect.addEventListener("change", saveOptions);
 detailLowInput.addEventListener("change", saveOptions);
+expectedLangInput.addEventListener("change", saveOptions);
 outputFormatSelect.addEventListener("change", saveOptions);
 
 const HEIC_TYPES = ["image/heic", "image/heif"];
@@ -261,6 +268,7 @@ function setBusy(busy) {
   batchSizeSelect.disabled = busy;
   concurrencySelect.disabled = busy;
   detailLowInput.disabled = busy;
+  expectedLangInput.disabled = busy;
   outputFormatSelect.disabled = busy;
 }
 
@@ -279,6 +287,19 @@ function updateOutputActions() {
 
 function getImageDetail() {
   return detailLowInput.checked ? "low" : "high";
+}
+
+function getExpectedLang() {
+  return expectedLangInput.value.trim();
+}
+
+function buildSystemPrompt(base) {
+  const lang = getExpectedLang();
+  if (!lang) return base;
+  return (
+    base +
+    `\n\nIMPORTANT — expected language: the slides are in ${lang}. Output ALL text in ${lang} exactly as written. Do not transliterate, translate, or substitute words into any other language. Even if some words look similar to another language, keep them in ${lang} as they appear on the slide.`
+  );
 }
 
 function getOutputFormat() {
@@ -345,10 +366,14 @@ function normalizeBatchBlocks(raw, batchStart, count) {
 
 function buildUserContentBatch(start, end, dataUrls, format) {
   const n = dataUrls.length;
+  const lang = getExpectedLang();
+  const langNote = lang
+    ? ` The expected language is ${lang}—output only in ${lang}, do not translate or mix languages.`
+    : "";
   const lines = [
     `There are ${n} images in order.`,
     `They are slides ${start} through ${end} (inclusive).`,
-    "Transcribe each slide in the same language(s) and script as printed on the slide; do not translate.",
+    `Transcribe each slide in the same language(s) and script as printed on the slide; do not translate.${langNote}`,
     `For each image, output one block starting with exactly "--- Slide K ---" where K is that slide's number (${start}…${end}).`,
     format === "html"
       ? "Inside each block, output only an HTML fragment (no wrapper document)."
@@ -536,13 +561,18 @@ async function processBatch(batchFiles, fileIndex, slots, apiKey, format) {
 
   let raw;
   if (batchFiles.length === 1) {
-    const system =
-      format === "html" ? SYSTEM_HTML_SINGLE : SYSTEM_MARKDOWN_SINGLE;
+    const system = buildSystemPrompt(
+      format === "html" ? SYSTEM_HTML_SINGLE : SYSTEM_MARKDOWN_SINGLE
+    );
     const detail = getImageDetail();
+    const lang = getExpectedLang();
+    const langNote = lang
+      ? ` The expected language is ${lang}—output only in ${lang}, do not translate or mix languages.`
+      : "";
     const userContent = [
       {
         type: "text",
-        text: "Transcribe this slide in the same language as on the slide; do not translate.",
+        text: `Transcribe this slide in the same language as on the slide; do not translate.${langNote}`,
       },
       {
         type: "image_url",
@@ -552,8 +582,9 @@ async function processBatch(batchFiles, fileIndex, slots, apiKey, format) {
     raw = await callOpenAI(apiKey, system, userContent);
     slots[fileIndex] = raw;
   } else {
-    const system =
-      format === "html" ? SYSTEM_HTML_BATCH : SYSTEM_MARKDOWN_BATCH;
+    const system = buildSystemPrompt(
+      format === "html" ? SYSTEM_HTML_BATCH : SYSTEM_MARKDOWN_BATCH
+    );
     const userContent = buildUserContentBatch(start, end, dataUrls, format);
     raw = await callOpenAI(apiKey, system, userContent);
     const normalized = normalizeBatchBlocks(raw, start, batchFiles.length);

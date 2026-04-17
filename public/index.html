@@ -62,6 +62,16 @@
               <option value="5">5</option>
             </select>
           </label>
+          <label class="inline">
+            <span>Expected language</span>
+            <input
+              id="expected-lang"
+              type="text"
+              name="expectedLang"
+              placeholder="e.g. Russian, Ukrainian, English"
+              title="Optional. If set, the model will treat all text as this language and will not translate or mix in other languages."
+            />
+          </label>
           <label class="check">
             <input id="detail-low" type="checkbox" name="detailLow" />
             <span>Lower image detail (fewer image tokens, faster; may hurt tiny text)</span>
